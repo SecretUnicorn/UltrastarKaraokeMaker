@@ -2,8 +2,10 @@ import os
 from enum import Enum
 from pydub import AudioSegment
 import shutil
-import sys
+import traceback
 import argparse
+import math
+import logging
 from helpers import colors
 import demucs.separate
 
@@ -19,24 +21,10 @@ class DemucsModel(Enum):
     SIG = "SIG"                     # Placeholder for a single model from the model zoo.
 
 
-def check_file_exists(file_path: str) -> bool:
-    """Checks if a file exists."""
-    return os.path.isfile(file_path)
 
 def separate_audio(input_file_path: str, output_folder: str, model: DemucsModel, device="cpu") -> None:
     """Separate vocals from audio with demucs."""
 
-    print(
-        f"""
-        =====================
-        STARTING AUDIO SEPARATION
-        =====================
-        Input file: {input_file_path}
-        Output folder: {output_folder}
-        Model: {model.value}
-        Device: {device}
-        """
-    )
 
     demucs.separate.main(
         [
@@ -50,48 +38,42 @@ def separate_audio(input_file_path: str, output_folder: str, model: DemucsModel,
         ]
     )
 
-def separate_vocal_from_audio(cache_folder_path: str,
-                              audio_output_file_path: str,
-                              use_separated_vocal: bool,
-                              create_karaoke: bool,
-                              pytorch_device: str,
-                              model: DemucsModel,
-                              skip_cache: bool = False) -> str:
-    """Separate vocal from audio"""
-    demucs_output_folder = os.path.splitext(os.path.basename(audio_output_file_path))[0]
-    audio_separation_path = os.path.join(cache_folder_path, "separated", model.value, demucs_output_folder)
-
-    vocals_path = os.path.join(audio_separation_path, "vocals.wav")
-    instrumental_path = os.path.join(audio_separation_path, "no_vocals.wav")
-    if use_separated_vocal or create_karaoke:
-        cache_available = check_file_exists(vocals_path) and check_file_exists(instrumental_path)
-        if skip_cache or not cache_available:
-            separate_audio(audio_output_file_path, cache_folder_path, model, pytorch_device)
-        else:
-            print(f"cache > reusing cached separated vocals")
-
-    return audio_separation_path
-
-def copy_and_save_serpated_audio(folder, song_name, txt_path) -> None:
+def copy_and_save_separated_audio(folder:str, song_name:str, txt_path:str, vocal_mix_volume:int=40) -> None:
     vocals_name = f"{song_name} [Vocals].mp3"
     instrumental_name = f"{song_name} [Instrumental].mp3"
-    seperation_folder = os.path.join(folder, "separated", "htdemucs", song_name)
-    vocals_path = os.path.join(seperation_folder, "vocals.wav")
-    instrumental_path = os.path.join(seperation_folder, "no_vocals.wav")
+    separated_audio_folder = os.path.join(folder, "separated", "htdemucs", song_name)
+    vocals_path = os.path.join(separated_audio_folder, "vocals.wav")
+    instrumental_path = os.path.join(separated_audio_folder, "no_vocals.wav")
+    
     # Convert vocals.wav to mp3
     if os.path.isfile(vocals_path):
       vocals_audio = AudioSegment.from_wav(vocals_path)
       vocals_audio.export(os.path.join(folder, vocals_name), format="mp3")
 
-    # Convert no_vocals.wav to mp3
-    if os.path.isfile(instrumental_path):
+    # Convert no_vocals.wav to mp3 and add vocals at 20% volume
+    if os.path.isfile(instrumental_path) and os.path.isfile(vocals_path):
+      instrumental_audio = AudioSegment.from_wav(instrumental_path)
+      
+      # check if vocal_mix_volume is greater than 0, otherwise just export instrumental
+      if vocal_mix_volume > 0:
+        vocals_audio = AudioSegment.from_wav(vocals_path)
+        
+        # Reduce vocals volume
+        percent_to_db = math.log10(vocal_mix_volume / 100) * 20
+        vocals_reduced = vocals_audio + percent_to_db 
+      
+        # Mix the instrumental with the reduced vocals
+        instrumental_with_backing = instrumental_audio.overlay(vocals_reduced)
+        
+      instrumental_with_backing.export(os.path.join(folder, instrumental_name), format="mp3")
+    elif os.path.isfile(instrumental_path):
+      # Fallback if vocals file doesn't exist
       instrumental_audio = AudioSegment.from_wav(instrumental_path)
       instrumental_audio.export(os.path.join(folder, instrumental_name), format="mp3")
 
     # Remove separated folder
-    seperation_base_folder = os.path.join(folder, "separated")
-    if os.path.isdir(seperation_base_folder):
-      shutil.rmtree(seperation_base_folder)
+    if os.path.isdir(separated_audio_folder):
+      shutil.rmtree(separated_audio_folder)
 
     # Add vocals and instrumental to txt file
     with open(txt_path, "r", encoding="utf-8") as f:
@@ -112,7 +94,7 @@ def copy_and_save_serpated_audio(folder, song_name, txt_path) -> None:
     with open(txt_path, "w", encoding="utf-8") as f:
       f.writelines(new_lines)
 
-def process_song_folder(input_folder:str) -> None:
+def process_song_folder(input_folder:str, overwrite_existing:bool=False, vocals_volume:int=40) -> None:
     # search for .txt file in input_folder
     input_file = None
     for file in os.listdir(input_folder):
@@ -125,13 +107,15 @@ def process_song_folder(input_folder:str) -> None:
 
     # read file and search for #MP3 or #AUDIO tag
     audio_file = None
+    
     # Check if #INSTRUMENTAL or #VOCALS is already in the file, skip if found
     with open(input_file, "r", encoding="utf-8") as f:
       lines = f.readlines()
-      for line in lines:
-        if line.strip().upper().startswith("#INSTRUMENTAL") or line.strip().upper().startswith("#VOCALS"):
-          print(colors.light_blue_highlighted(f"Skipping folder '{input_folder}' as #INSTRUMENTAL or #VOCALS tag already exists."))
-          return
+      if not overwrite_existing:
+        for line in lines:
+          if line.strip().upper().startswith("#INSTRUMENTAL") or line.strip().upper().startswith("#VOCALS"):
+            print(colors.light_blue_highlighted(f"⏩ Skipping folder '{os.path.basename(input_folder)}' as #INSTRUMENTAL or #VOCALS tag already exists."))
+            return
       for line in lines:
         if line.startswith("#MP3"):
           audio_file = line[5:].strip()
@@ -139,35 +123,36 @@ def process_song_folder(input_folder:str) -> None:
         elif line.startswith("#AUDIO"):
           audio_file = line[7:].strip()
           break
+        
     if audio_file is None:
       raise ValueError("No #MP3 or #AUDIO tag found in the .txt file.")
     
-    print("Joining path:", input_folder, "with", audio_file)
     audio_file_path = os.path.join(input_folder, audio_file)
     if not os.path.isfile(audio_file_path):
       raise FileNotFoundError(f"Audio file specified in the .txt file not found: {audio_file_path}")
 
     output_folder = input_folder
-    model = DemucsModel.HTDEMUCS
-    device = "cpu"  # Using CPU since RTX 5080 requires newer PyTorch
 
-    separate_audio(audio_file_path, output_folder, model, device)
-    copy_and_save_serpated_audio(output_folder, os.path.splitext(os.path.basename(audio_file_path))[0], input_file)
+    separate_audio(audio_file_path, output_folder)
+    copy_and_save_separated_audio(output_folder, os.path.splitext(os.path.basename(audio_file_path))[0], input_file, vocals_volume)
+
 
 def main():
     
     parser=argparse.ArgumentParser()
     parser.add_argument("input_folder")
-    parser.add_argument("--limit", help="Limits the amount of folders processed")
-    parser.add_argument("--offset", help="Offset for the program")
-    
-    # take base folder from argument
+    parser.add_argument("--limit", help="Limits the amount of folders processed", type=int)
+    parser.add_argument("--offset", help="Offset for the program", default=0, type=int)
+    parser.add_argument("--overwrite", help="Overwrite existing files", action="store_true")
+    parser.add_argument("--vocals_volume", help="Set vocals volume percentage (default is 40%)", type=int, default=40)
     
     
     args=parser.parse_args()
+    
     # get all folders inside of input_folder
     folder_list = [os.path.join(args.input_folder, name) for name in os.listdir(args.input_folder) if os.path.isdir(os.path.join(args.input_folder, name))]
     offset = int(args.offset) if args.offset else 0
+    
     if args.limit and offset > 0:
       folder_list = folder_list[offset:offset + int(args.limit)]
     elif args.limit and not offset:
@@ -176,12 +161,14 @@ def main():
       folder_list = folder_list[offset:]
     
     for idx, folder in enumerate(folder_list):
-      print(colors.blue_highlighted(f"({idx + 1} / {len(folder_list)}) Processing folder: {folder}"))
+      print(colors.blue_highlighted(f"\n⏳({idx + 1} / {len(folder_list)}) Processing folder: {os.path.basename(folder)}"))
       try:
-        process_song_folder(folder)
-        print(colors.bright_green_highlighted(f"Finished processing folder: {folder}"))
+        process_song_folder(folder, overwrite_existing=args.overwrite, vocals_volume=args.vocals_volume)
+        print(colors.bright_green_highlighted(f"✅ Finished processing folder: {os.path.basename(folder)}"))
       except Exception as e:
-        print(colors.red_highlighted(f"Error processing folder {folder}: {e}"))
+        print(colors.red_highlighted(f"🚩Error processing folder {folder}: {e}"))
+        traceback.print_exc()
+        
         
 if __name__ == "__main__":
     main()
