@@ -4,19 +4,22 @@ A powerful tool for automatically creating karaoke tracks from Ultrastar song fo
 
 ## Features
 
-- 🎵 **Automatic Audio Separation**: Uses the `mel_band_roformer_karaoke_aufr33_viperx_sdr_10` AI model to separate vocals from instrumentals
-- 🎤 **Karaoke Track Generation**: Creates instrumental tracks with subtle backing vocals for better singing experience
-- 📁 **Batch Processing**: Process multiple song folders at once with offset and limit controls
-- 🔧 **Customizable**: Adjustable backing vocal volume (default 30%)
-- 🚀 **GPU Acceleration**: Supports both CPU and GPU processing for faster separation
-- 📝 **Ultrastar Integration**: Automatically adds `#VOCALS` and `#INSTRUMENTAL` tags to the UltraStar .txt files
+- **Automatic Audio Separation**: Uses advanced AI models for high-quality vocal/instrumental separation
+  - **GPU Mode**: `mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt` model via audio-separator
+  - **CPU Mode**: Demucs HTDEMUCS model for CPU-friendly processing
+- **Karaoke Track Generation**: Creates instrumental tracks with subtle backing vocals for better singing experience
+- **Batch Processing**: Process multiple song folders at once with offset and limit controls
+- **Customizable**: Adjustable backing vocal volume (default 40%)
+- **UltraStar Integration**: Automatically adds `#VOCALS` and `#INSTRUMENTAL` tags to .txt files
 
 ## Installation
 
 ### Prerequisites
 
 - Python 3.10 or higher
+- Pip package manager
 - FFmpeg installed and available in PATH
+- Some patience and willingness to tinker because of potential dependency / hardware issues
 
 ### GPU Version (Recommended)
 
@@ -60,41 +63,44 @@ pip install -r cpu.requirements.txt
 
 ## Usage
 
-### GPU Version (main_cuda.py)
+### GPU Version Usage
 
 Use this for faster processing with GPU acceleration:
 
 ```bash
-python main_cuda.py "path/to/ultrastar/songs" [options]
+python cuda.py "path/to/ultrastar/songs" --mode cuda [options]
 ```
 
 **Options:**
+
+- `--mode MODE`: Specify device mode (`cuda` or `cpu`); This setting is required.
 - `--limit N`: Process only the first N folders
 - `--offset N`: Skip the first N folders (useful for resuming)
 - `--overwrite`: Process folders even if they already have vocals/instrumental files. If this flag is not set, folders with .txt files that contain either `#VOCALS` and `#INSTRUMENTAL` tags will be skipped.
-- `--vocals_volume N`: Set backing vocals volume percentage (default: 30%)
+- `--vocals_volume N`: Set backing vocals volume percentage (default: 40%)
 
 **Examples:**
+
 ```bash
 # Process all songs in a folder
-python main_cuda.py "C:\Music\Ultrastar Songs"
+python main.py "C:\Music\Ultrastar Songs"
 
 # Process first 10 songs
-python main_cuda.py "C:\Music\Ultrastar Songs" --limit 10
+python main.py "C:\Music\Ultrastar Songs" --limit 10
 
 # Resume processing from song 51-100
-python main_cuda.py "C:\Music\Ultrastar Songs" --limit 50 --offset 50
+python main.py "C:\Music\Ultrastar Songs" --limit 50 --offset 50
 
-# Use 20% backing vocal volume and overwrite existing files
-python main_cuda.py "C:\Music\Ultrastar Songs" --vocals_volume 20 --overwrite
+# Use 25% backing vocal volume and overwrite existing files
+python main.py "C:\Music\Ultrastar Songs" --vocals_volume 25 --overwrite
 ```
 
-### CPU Version (main.py)
+### CPU Version Usage
 
 Use this for systems without GPU support:
 
 ```bash
-python main.py "path/to/ultrastar/songs" [options]
+python main.py "path/to/ultrastar/songs" --mode cpu [options]
 ```
 
 The options are the same as the GPU version, but processing will be slower.
@@ -117,11 +123,11 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 1. **"FFmpeg not found"**: Make sure FFmpeg is installed and available in your system PATH
 2. **CUDA errors**: Ensure you have compatible NVIDIA drivers and use the GPU installation method
-3. **Out of memory**: Reduce batch processing or use CPU version for very long songs
+3. **audio_separator says gpu not available**: Reinstall the torch packages after you cleared the pip cache so that the correct ones get installed
 4. **Model download fails**: Check your internet connection; models are downloaded automatically on first use
 
 ### Performance Tips
 
-- Use the GPU version (`main_cuda.py`) for significantly faster processing
+- Use the GPU version (`main.py --mode cuda`) for significantly faster processing
 - Process songs in batches using `--limit` and `--offset` for better resource management
 - Close other applications when processing large batches to free up system resources

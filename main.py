@@ -1,100 +1,11 @@
 import os
-from enum import Enum
-from pydub import AudioSegment
-import shutil
 import traceback
 import argparse
-import math
-import logging
 from helpers import colors
-import demucs.separate
-
-class DemucsModel(Enum):
-    HTDEMUCS = "htdemucs"           # first version of Hybrid Transformer Demucs. Trained on MusDB + 800 songs. Default model.
-    HTDEMUCS_FT = "htdemucs_ft"     # fine-tuned version of htdemucs, separation will take 4 times more time but might be a bit better. Same training set as htdemucs.
-    HTDEMUCS_6S = "htdemucs_6s"     # 6 sources version of htdemucs, with piano and guitar being added as sources. Note that the piano source is not working great at the moment.
-    HDEMUCS_MMI = "hdemucs_mmi"     # Hybrid Demucs v3, retrained on MusDB + 800 songs.
-    MDX = "mdx"                     # trained only on MusDB HQ, winning model on track A at the MDX challenge.
-    MDX_EXTRA = "mdx_extra"         # trained with extra training data (including MusDB test set), ranked 2nd on the track B of the MDX challenge.
-    MDX_Q = "mdx_q"                 # quantized version of the previous models. Smaller download and storage but quality can be slightly worse.
-    MDX_EXTRA_Q = "mdx_extra_q"     # quantized version of mdx_extra. Smaller download and storage but quality can be slightly worse.
-    SIG = "SIG"                     # Placeholder for a single model from the model zoo.
+from helpers.audio_seperator import AudioSeparator, DemucsModel
 
 
-
-def separate_audio(input_file_path: str, output_folder: str, model: DemucsModel, device="cpu") -> None:
-    """Separate vocals from audio with demucs."""
-
-
-    demucs.separate.main(
-        [
-            "--two-stems", "vocals",
-            "-d", f"{device}",
-            "--float32",
-            "-n",
-            model.value,
-            "--out", f"{os.path.join(output_folder, 'separated')}",
-            f"{input_file_path}",
-        ]
-    )
-
-def copy_and_save_separated_audio(folder:str, song_name:str, txt_path:str, vocal_mix_volume:int=40) -> None:
-    vocals_name = f"{song_name} [Vocals].mp3"
-    instrumental_name = f"{song_name} [Instrumental].mp3"
-    separated_audio_folder = os.path.join(folder, "separated", "htdemucs", song_name)
-    vocals_path = os.path.join(separated_audio_folder, "vocals.wav")
-    instrumental_path = os.path.join(separated_audio_folder, "no_vocals.wav")
-    
-    # Convert vocals.wav to mp3
-    if os.path.isfile(vocals_path):
-      vocals_audio = AudioSegment.from_wav(vocals_path)
-      vocals_audio.export(os.path.join(folder, vocals_name), format="mp3")
-
-    # Convert no_vocals.wav to mp3 and add vocals at 20% volume
-    if os.path.isfile(instrumental_path) and os.path.isfile(vocals_path):
-      instrumental_audio = AudioSegment.from_wav(instrumental_path)
-      
-      # check if vocal_mix_volume is greater than 0, otherwise just export instrumental
-      if vocal_mix_volume > 0:
-        vocals_audio = AudioSegment.from_wav(vocals_path)
-        
-        # Reduce vocals volume
-        percent_to_db = math.log10(vocal_mix_volume / 100) * 20
-        vocals_reduced = vocals_audio + percent_to_db 
-      
-        # Mix the instrumental with the reduced vocals
-        instrumental_with_backing = instrumental_audio.overlay(vocals_reduced)
-        
-      instrumental_with_backing.export(os.path.join(folder, instrumental_name), format="mp3")
-    elif os.path.isfile(instrumental_path):
-      # Fallback if vocals file doesn't exist
-      instrumental_audio = AudioSegment.from_wav(instrumental_path)
-      instrumental_audio.export(os.path.join(folder, instrumental_name), format="mp3")
-
-    # Remove separated folder
-    if os.path.isdir(separated_audio_folder):
-      shutil.rmtree(separated_audio_folder)
-
-    # Add vocals and instrumental to txt file
-    with open(txt_path, "r", encoding="utf-8") as f:
-      lines = f.readlines()
-
-    new_lines = []
-    vocals_line = f"#VOCALS:{vocals_name}\n"
-    instrumental_line = f"#INSTRUMENTAL:{instrumental_name}\n"
-    inserted = False
-
-    for line in lines:
-      new_lines.append(line)
-      if not inserted and line.strip().upper().startswith("#MP3"):
-        new_lines.append(vocals_line)
-        new_lines.append(instrumental_line)
-        inserted = True
-
-    with open(txt_path, "w", encoding="utf-8") as f:
-      f.writelines(new_lines)
-
-def process_song_folder(input_folder:str, overwrite_existing:bool=False, vocals_volume:int=40) -> None:
+def process_song_folder(input_folder:str, device:str="cuda", overwrite_existing:bool=False, vocals_volume:int=40) -> None:
     # search for .txt file in input_folder
     input_file = None
     for file in os.listdir(input_folder):
@@ -131,20 +42,23 @@ def process_song_folder(input_folder:str, overwrite_existing:bool=False, vocals_
     if not os.path.isfile(audio_file_path):
       raise FileNotFoundError(f"Audio file specified in the .txt file not found: {audio_file_path}")
 
-    output_folder = input_folder
-
-    separate_audio(audio_file_path, output_folder)
-    copy_and_save_separated_audio(output_folder, os.path.splitext(os.path.basename(audio_file_path))[0], input_file, vocals_volume)
+    # Initialize separator with CPU device
+    separator = AudioSeparator(device=device)
+    
+    # Separate audio and create karaoke tracks using HTDEMUCS model
+    separator.separate_audio(audio_file_path, input_folder, DemucsModel.HTDEMUCS)
+    separator.copy_and_save_separated_audio(input_folder, os.path.splitext(os.path.basename(audio_file_path))[0], input_file, vocals_volume)
 
 
 def main():
     
     parser=argparse.ArgumentParser()
     parser.add_argument("input_folder")
+    parser.add_argument("--device", help="Device to use for separation (cpu or cuda)", type=str, required=True)
     parser.add_argument("--limit", help="Limits the amount of folders processed", type=int)
     parser.add_argument("--offset", help="Offset for the program", default=0, type=int)
     parser.add_argument("--overwrite", help="Overwrite existing files", action="store_true")
-    parser.add_argument("--vocals_volume", help="Set vocals volume percentage (default is 40%)", type=int, default=40)
+    parser.add_argument("--vocals_volume", help="Set vocals volume percentage (default is 40%%)", type=int, default=40)
     
     
     args=parser.parse_args()
@@ -163,7 +77,7 @@ def main():
     for idx, folder in enumerate(folder_list):
       print(colors.blue_highlighted(f"\n⏳({idx + 1} / {len(folder_list)}) Processing folder: {os.path.basename(folder)}"))
       try:
-        process_song_folder(folder, overwrite_existing=args.overwrite, vocals_volume=args.vocals_volume)
+        process_song_folder(folder, args.device, overwrite_existing=args.overwrite, vocals_volume=args.vocals_volume)
         print(colors.bright_green_highlighted(f"✅ Finished processing folder: {os.path.basename(folder)}"))
       except Exception as e:
         print(colors.red_highlighted(f"🚩Error processing folder {folder}: {e}"))
