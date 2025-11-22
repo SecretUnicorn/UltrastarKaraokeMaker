@@ -9,24 +9,8 @@ import logging
 from helpers import colors
 from audio_separator.separator import Separator
 
-class DemucsModel(Enum):
-    HTDEMUCS = "htdemucs"           # first version of Hybrid Transformer Demucs. Trained on MusDB + 800 songs. Default model.
-    HTDEMUCS_FT = "htdemucs_ft"     # fine-tuned version of htdemucs, separation will take 4 times more time but might be a bit better. Same training set as htdemucs.
-    HTDEMUCS_6S = "htdemucs_6s"     # 6 sources version of htdemucs, with piano and guitar being added as sources. Note that the piano source is not working great at the moment.
-    HDEMUCS_MMI = "hdemucs_mmi"     # Hybrid Demucs v3, retrained on MusDB + 800 songs.
-    MDX = "mdx"                     # trained only on MusDB HQ, winning model on track A at the MDX challenge.
-    MDX_EXTRA = "mdx_extra"         # trained with extra training data (including MusDB test set), ranked 2nd on the track B of the MDX challenge.
-    MDX_Q = "mdx_q"                 # quantized version of the previous models. Smaller download and storage but quality can be slightly worse.
-    MDX_EXTRA_Q = "mdx_extra_q"     # quantized version of mdx_extra. Smaller download and storage but quality can be slightly worse.
-    SIG = "SIG"                     # Placeholder for a single model from the model zoo.
-
-
-def check_file_exists(file_path: str) -> bool:
-    """Checks if a file exists."""
-    return os.path.isfile(file_path)
-
 def separate_audio(input_file_path: str, output_folder: str) -> None:
-    """Separate vocals from audio with demucs."""
+    """Separate vocals from audio with the audio_separator library."""
 
     output_names = {
         "Vocals": "vocals",
@@ -42,14 +26,12 @@ def separate_audio(input_file_path: str, output_folder: str) -> None:
     separator.load_model(model_filename="mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt")
     separator.separate(input_file_path, output_names)
 
-def copy_and_save_serpated_audio(folder:str, song_name:str, txt_path:str, vocal_mix_volume:int=30) -> None:
+def copy_and_save_separated_audio(folder:str, song_name:str, txt_path:str, vocal_mix_volume:int=40) -> None:
     vocals_name = f"{song_name} [Vocals].mp3"
     instrumental_name = f"{song_name} [Instrumental].mp3"
-    seperation_folder = os.path.join(folder, "separated")
-    vocals_path = os.path.join(seperation_folder, "vocals.wav")
-    instrumental_path = os.path.join(seperation_folder, "no_vocals.wav")
-    
-    
+    separated_audio_folder = os.path.join(folder, "separated")
+    vocals_path = os.path.join(separated_audio_folder, "vocals.wav")
+    instrumental_path = os.path.join(separated_audio_folder, "no_vocals.wav")
     
     # Convert vocals.wav to mp3
     if os.path.isfile(vocals_path):
@@ -61,7 +43,7 @@ def copy_and_save_serpated_audio(folder:str, song_name:str, txt_path:str, vocal_
       instrumental_audio = AudioSegment.from_wav(instrumental_path)
       vocals_audio = AudioSegment.from_wav(vocals_path)
       
-      # Reduce vocals volume to 30%
+      # Reduce vocals volume
       percent_to_db = math.log10(vocal_mix_volume / 100) * 20
       vocals_reduced = vocals_audio + percent_to_db 
       
@@ -74,9 +56,8 @@ def copy_and_save_serpated_audio(folder:str, song_name:str, txt_path:str, vocal_
       instrumental_audio.export(os.path.join(folder, instrumental_name), format="mp3")
 
     # Remove separated folder
-    seperation_base_folder = os.path.join(folder, "separated")
-    if os.path.isdir(seperation_base_folder):
-      shutil.rmtree(seperation_base_folder)
+    if os.path.isdir(separated_audio_folder):
+      shutil.rmtree(separated_audio_folder)
 
     # Add vocals and instrumental to txt file
     with open(txt_path, "r", encoding="utf-8") as f:
@@ -97,7 +78,7 @@ def copy_and_save_serpated_audio(folder:str, song_name:str, txt_path:str, vocal_
     with open(txt_path, "w", encoding="utf-8") as f:
       f.writelines(new_lines)
 
-def process_song_folder(input_folder:str, overwrite_existing:bool=False, vocals_volume:int=20) -> None:
+def process_song_folder(input_folder:str, overwrite_existing:bool=False, vocals_volume:int=40) -> None:
     # search for .txt file in input_folder
     input_file = None
     for file in os.listdir(input_folder):
@@ -110,6 +91,7 @@ def process_song_folder(input_folder:str, overwrite_existing:bool=False, vocals_
 
     # read file and search for #MP3 or #AUDIO tag
     audio_file = None
+    
     # Check if #INSTRUMENTAL or #VOCALS is already in the file, skip if found
     with open(input_file, "r", encoding="utf-8") as f:
       lines = f.readlines()
@@ -125,6 +107,7 @@ def process_song_folder(input_folder:str, overwrite_existing:bool=False, vocals_
         elif line.startswith("#AUDIO"):
           audio_file = line[7:].strip()
           break
+        
     if audio_file is None:
       raise ValueError("No #MP3 or #AUDIO tag found in the .txt file.")
     
@@ -135,7 +118,8 @@ def process_song_folder(input_folder:str, overwrite_existing:bool=False, vocals_
     output_folder = input_folder
 
     separate_audio(audio_file_path, output_folder)
-    copy_and_save_serpated_audio(output_folder, os.path.splitext(os.path.basename(audio_file_path))[0], input_file, vocals_volume)
+    copy_and_save_separated_audio(output_folder, os.path.splitext(os.path.basename(audio_file_path))[0], input_file, vocals_volume)
+
 
 def main():
     
@@ -144,15 +128,15 @@ def main():
     parser.add_argument("--limit", help="Limits the amount of folders processed", type=int)
     parser.add_argument("--offset", help="Offset for the program", default=0, type=int)
     parser.add_argument("--overwrite", help="Overwrite existing files", action="store_true")
-    parser.add_argument("--vocals_volume", help="Set vocals volume percentage (default is 30%)", type=int, default=30)
-    
-    # take base folder from argument
+    parser.add_argument("--vocals_volume", help="Set vocals volume percentage (default is 40%)", type=int, default=40)
     
     
     args=parser.parse_args()
+    
     # get all folders inside of input_folder
     folder_list = [os.path.join(args.input_folder, name) for name in os.listdir(args.input_folder) if os.path.isdir(os.path.join(args.input_folder, name))]
     offset = int(args.offset) if args.offset else 0
+    
     if args.limit and offset > 0:
       folder_list = folder_list[offset:offset + int(args.limit)]
     elif args.limit and not offset:
@@ -168,6 +152,7 @@ def main():
       except Exception as e:
         print(colors.red_highlighted(f"🚩Error processing folder {folder}: {e}"))
         traceback.print_exc()
+        
         
 if __name__ == "__main__":
     main()
