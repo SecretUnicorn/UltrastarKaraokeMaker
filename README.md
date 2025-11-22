@@ -19,6 +19,7 @@ A powerful tool for automatically creating karaoke tracks from Ultrastar song fo
 - Python 3.10 or higher
 - Pip package manager
 - FFmpeg installed and available in PATH
+- Cuda capable NVIDIA GPU (for GPU version) + CUDA Drivers installed ([https://developer.nvidia.com/cuda-downloads](https://developer.nvidia.com/cuda-downloads))
 - Some patience and willingness to tinker because of potential dependency / hardware issues
 
 ### GPU Version (Recommended)
@@ -37,6 +38,7 @@ venv-cuda\Scripts\activate  # Windows
 # source venv-cuda/bin/activate  # Linux/Mac
 
 # Install PyTorch with CUDA support
+# Check this website to get the correct index-url for your CUDA version: https://pytorch.org/get-started/locally/
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 
 # Install other dependencies
@@ -125,6 +127,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 2. **CUDA errors**: Ensure you have compatible NVIDIA drivers and use the GPU installation method
 3. **audio_separator says gpu not available**: Reinstall the torch packages after you cleared the pip cache so that the correct ones get installed
 4. **Model download fails**: Check your internet connection; models are downloaded automatically on first use
+
+If you encounter other issues: Good luck!
 
 ### Performance Tips
 
