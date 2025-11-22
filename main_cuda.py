@@ -41,14 +41,18 @@ def copy_and_save_separated_audio(folder:str, song_name:str, txt_path:str, vocal
     # Convert no_vocals.wav to mp3 and add vocals at 20% volume
     if os.path.isfile(instrumental_path) and os.path.isfile(vocals_path):
       instrumental_audio = AudioSegment.from_wav(instrumental_path)
-      vocals_audio = AudioSegment.from_wav(vocals_path)
       
-      # Reduce vocals volume
-      percent_to_db = math.log10(vocal_mix_volume / 100) * 20
-      vocals_reduced = vocals_audio + percent_to_db 
+      # check if vocal_mix_volume is greater than 0, otherwise just export instrumental
+      if vocal_mix_volume > 0:
+        vocals_audio = AudioSegment.from_wav(vocals_path)
+        
+        # Reduce vocals volume
+        percent_to_db = math.log10(vocal_mix_volume / 100) * 20
+        vocals_reduced = vocals_audio + percent_to_db 
       
-      # Mix the instrumental with the reduced vocals
-      instrumental_with_backing = instrumental_audio.overlay(vocals_reduced)
+        # Mix the instrumental with the reduced vocals
+        instrumental_with_backing = instrumental_audio.overlay(vocals_reduced)
+        
       instrumental_with_backing.export(os.path.join(folder, instrumental_name), format="mp3")
     elif os.path.isfile(instrumental_path):
       # Fallback if vocals file doesn't exist
